@@ -21,7 +21,8 @@ FidgetAudioProcessor::FidgetAudioProcessor()
                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
                      #endif
                        ),
-       parameters(*this, nullptr, "Parameters", createParameterLayout())
+       parameters(*this, nullptr, "Parameters", createParameterLayout()),
+       random(juce::Time::currentTimeMillis())
 #endif
 {
     weirdnessParam = parameters.getRawParameterValue("weirdness");
@@ -48,14 +49,34 @@ void FidgetAudioProcessor::initializeNoteWeirdness()
         int typeIndex = std::abs(static_cast<int>(seed1)) % static_cast<int>(WeirdType::NUM_TYPES);
         nw.type = static_cast<WeirdType>(typeIndex);
         
+        // Assign wave type based on note in octave
+        nw.waveType = getWaveTypeForNote(note);
+        
+        // Assign filter type based on note in octave
+        nw.filterType = getFilterTypeForNote(note);
+        
         // Set parameters for each type
-        nw.wobbleRate = 0.5f + (seed1 - std::floor(seed1)) * 20.0f;  // Increased from 10.0f to 20.0f
-        nw.glitchChance = (seed2 - std::floor(seed2)) * 0.6f;  // Increased from 0.3f to 0.6f
-        nw.harmonicMix = 2.0f + (seed3 - std::floor(seed3)) * 10.0f;  // Increased from 5.0f to 10.0f
-        nw.ringModFreq = 50.0f + (seed1 - std::floor(seed1)) * 1000.0f;  // Increased from 500.0f to 1000.0f
-        nw.filterFreq = 200.0f + (seed2 - std::floor(seed2)) * 4000.0f;  // Increased from 2000.0f to 4000.0f
+        nw.wobbleRate = 0.5f + (seed1 - std::floor(seed1)) * 20.0f;
+        nw.glitchChance = (seed2 - std::floor(seed2)) * 0.6f;
+        nw.harmonicMix = 2.0f + (seed3 - std::floor(seed3)) * 10.0f;
+        nw.ringModFreq = 50.0f + (seed1 - std::floor(seed1)) * 1000.0f;
+        nw.filterFreq = 200.0f + (seed2 - std::floor(seed2)) * 4000.0f;
         nw.bitDepth = 2.0f + (seed3 - std::floor(seed3)) * 14.0f;
-        nw.grainSize = 0.001f + (seed1 - std::floor(seed1)) * 0.1f;  // Increased from 0.05f to 0.1f
+        nw.grainSize = 0.001f + (seed1 - std::floor(seed1)) * 0.1f;
+        
+        // Generate random effect amounts for each knob position
+        for (int knobPos = 0; knobPos < 128; ++knobPos)
+        {
+            // Create unique random value for this note + knob position combination
+            float knobSeed = std::sin((note * 128 + knobPos) * 0.7654f) * 1000.0f;
+            nw.randomAmounts[knobPos] = knobSeed - std::floor(knobSeed);
+            
+            // Random filter parameters
+            float filterSeed1 = std::sin((note * 128 + knobPos) * 0.4321f) * 1000.0f;
+            float filterSeed2 = std::cos((note * 128 + knobPos) * 0.8765f) * 1000.0f;
+            nw.randomCutoffs[knobPos] = 100.0f + (filterSeed1 - std::floor(filterSeed1)) * 8000.0f; // 100Hz to 8100Hz
+            nw.randomResonances[knobPos] = (filterSeed2 - std::floor(filterSeed2)) * 0.95f; // 0 to 0.95
+        }
     }
 }
 
@@ -64,6 +85,92 @@ FidgetAudioProcessor::WeirdType FidgetAudioProcessor::getCurrentWeirdType() cons
     if (currentNote >= 0 && currentNote < 128)
         return noteWeirdness[currentNote].type;
     return WeirdType::Wobbler;
+}
+
+FidgetAudioProcessor::WaveType FidgetAudioProcessor::getCurrentWaveType() const
+{
+    if (currentNote >= 0 && currentNote < 128)
+        return noteWeirdness[currentNote].waveType;
+    return WaveType::Sine;
+}
+
+FidgetAudioProcessor::FilterType FidgetAudioProcessor::getCurrentFilterType() const
+{
+    if (currentNote >= 0 && currentNote < 128)
+        return noteWeirdness[currentNote].filterType;
+    return FilterType::LowPass;
+}
+
+float FidgetAudioProcessor::generateOscillator(WaveType type, float phase, float frequency)
+{
+    switch (type)
+    {
+        case WaveType::Sine:
+            return std::sin(2.0f * juce::MathConstants<float>::pi * phase);
+            
+        case WaveType::Square:
+            return phase < 0.5f ? 1.0f : -1.0f;
+            
+        case WaveType::Sawtooth:
+            return 2.0f * phase - 1.0f;
+            
+        case WaveType::Triangle:
+            return phase < 0.5f ? 4.0f * phase - 1.0f : 3.0f - 4.0f * phase;
+            
+        case WaveType::Pulse25:
+            return phase < 0.25f ? 1.0f : -1.0f;
+            
+        case WaveType::WhiteNoise:
+            return (random.nextFloat() * 2.0f - 1.0f);
+            
+        case WaveType::PinkNoise:
+        {
+            float white = random.nextFloat() * 2.0f - 1.0f;
+            noiseState = 0.99f * noiseState + 0.01f * white;
+            return noiseState;
+        }
+            
+        case WaveType::Supersaw:
+        {
+            float output = 0.0f;
+            for (int i = 0; i < 7; ++i)
+            {
+                float detune = 1.0f + (i - 3) * 0.01f;
+                output += 2.0f * sawPhases[i] - 1.0f;
+            }
+            return output / 7.0f;
+        }
+            
+        case WaveType::FM:
+        {
+            float modulator = std::sin(2.0f * juce::MathConstants<float>::pi * fmPhase);
+            return std::sin(2.0f * juce::MathConstants<float>::pi * (phase + 0.5f * modulator));
+        }
+            
+        case WaveType::SquareSub:
+        {
+            float square = phase < 0.5f ? 1.0f : -1.0f;
+            float sub = std::sin(2.0f * juce::MathConstants<float>::pi * subPhase);
+            return 0.7f * square + 0.3f * sub;
+        }
+            
+        case WaveType::Pulse75:
+            return phase < 0.75f ? 1.0f : -1.0f;
+            
+        case WaveType::CrackleNoise:
+        {
+            crackleTimer += 1.0f / currentSampleRate;
+            if (crackleTimer > 0.01f * (1.0f + random.nextFloat()))
+            {
+                crackleTimer = 0.0f;
+                return (random.nextFloat() * 2.0f - 1.0f) * 2.0f; // Louder bursts
+            }
+            return 0.0f;
+        }
+            
+        default:
+            return 0.0f;
+    }
 }
 
 const juce::String FidgetAudioProcessor::getName() const
@@ -178,7 +285,7 @@ float FidgetAudioProcessor::processWeirdOscillator(float baseValue, int noteNumb
         case WeirdType::Glitcher:
         {
             glitchCounter++;
-            if (glitchCounter > currentSampleRate / 100) // Check every 10ms
+            if (glitchCounter > currentSampleRate / 100)
             {
                 glitchCounter = 0;
                 float random = std::sin(phase * 12345.6789f) * 1000.0f;
@@ -195,7 +302,7 @@ float FidgetAudioProcessor::processWeirdOscillator(float baseValue, int noteNumb
         {
             float harmonic = std::sin(2.0f * juce::MathConstants<float>::pi * phase2);
             output = baseValue * (1.0f - weirdnessAmount * 0.8f) + 
-                     harmonic * weirdnessAmount * 1.2f;  // More harmonic content
+                     harmonic * weirdnessAmount * 1.2f;  // Increased harmonic content
             phase2 += (frequency * nw.harmonicMix) / currentSampleRate;
             if (phase2 > 1.0f) phase2 -= 1.0f;
             break;
@@ -203,14 +310,14 @@ float FidgetAudioProcessor::processWeirdOscillator(float baseValue, int noteNumb
         
         case WeirdType::Reverser:
         {
-            float reverseAmount = std::sin(phase * juce::MathConstants<float>::pi * 16.0f);  // More intense reversing
-            output = baseValue * (1.0f - weirdnessAmount * 1.5f + reverseAmount * weirdnessAmount * 2.0f);
+            float reverseAmount = std::sin(phase * juce::MathConstants<float>::pi * 16.0f);  // Doubled frequency
+            output = baseValue * (1.0f - weirdnessAmount * 1.5f + reverseAmount * weirdnessAmount * 1.5f);
             break;
         }
         
         case WeirdType::BitCrusher:
         {
-            float bitDepth = 16.0f - (15.5f * weirdnessAmount);  // More extreme bit crushing
+            float bitDepth = 16.0f - (15.5f * weirdnessAmount);  // More extreme crushing
             float scale = std::pow(2.0f, bitDepth);
             output = std::round(baseValue * scale) / scale;
             break;
@@ -219,7 +326,7 @@ float FidgetAudioProcessor::processWeirdOscillator(float baseValue, int noteNumb
         case WeirdType::RingMod:
         {
             float ringMod = std::sin(2.0f * juce::MathConstants<float>::pi * phase2);
-            output = baseValue * (1.0f - weirdnessAmount * 1.5f + ringMod * weirdnessAmount * 2.0f);  // More ring mod intensity
+            output = baseValue * (1.0f - weirdnessAmount + ringMod * weirdnessAmount * 2.0f);  // Doubled intensity
             phase2 += nw.ringModFreq / currentSampleRate;
             if (phase2 > 1.0f) phase2 -= 1.0f;
             break;
@@ -231,18 +338,17 @@ float FidgetAudioProcessor::processWeirdOscillator(float baseValue, int noteNumb
             if (grainPhase > 1.0f)
             {
                 grainPhase = 0.0f;
-                phase = 0.0f; // Reset phase for stutter effect
+                phase = 0.0f;
             }
             float grainEnv = std::sin(grainPhase * juce::MathConstants<float>::pi);
-            output = baseValue * (1.0f - weirdnessAmount * 1.5f + grainEnv * weirdnessAmount * 2.0f);  // More dramatic granular effect
+            output = baseValue * (1.0f - weirdnessAmount + grainEnv * weirdnessAmount * 2.0f);  // Doubled effect
             break;
         }
         
         case WeirdType::FilterSweep:
         {
-            // Simple resonant filter simulation
             float cutoff = nw.filterFreq * (1.0f + std::sin(wobblePhase * 2.0f * juce::MathConstants<float>::pi));
-            float resonance = 10.0f * weirdnessAmount;  // Double the resonance for more dramatic filter sweeps
+            float resonance = 10.0f * weirdnessAmount;  // Doubled from 5.0f to 10.0f
             float filterFreq = cutoff / currentSampleRate;
             filterState += (baseValue - filterState) * filterFreq;
             float highpass = baseValue - filterState;
@@ -257,6 +363,152 @@ float FidgetAudioProcessor::processWeirdOscillator(float baseValue, int noteNumb
     }
     
     return output;
+}
+
+float FidgetAudioProcessor::processChaosFilter(float input, FilterType type, float cutoff, float resonance)
+{
+    // Normalize cutoff to 0-1 range
+    float normalizedCutoff = juce::jlimit(0.0f, 1.0f, cutoff / static_cast<float>(currentSampleRate * 0.5));
+    float f = normalizedCutoff * 1.16f;
+    float fb = resonance + resonance / (1.0f - f);
+    
+    switch (type)
+    {
+        case FilterType::LowPass:
+        {
+            // 4-pole ladder filter
+            filterState1 += f * (input - filterState1 + fb * (filterState1 - filterState2));
+            filterState2 += f * (filterState1 - filterState2);
+            filterState3 += f * (filterState2 - filterState3);
+            filterState4 += f * (filterState3 - filterState4);
+            return filterState4;
+        }
+        
+        case FilterType::HighPass:
+        {
+            // High pass using low pass subtraction
+            filterState1 += f * (input - filterState1 + fb * (filterState1 - filterState2));
+            filterState2 += f * (filterState1 - filterState2);
+            return input - filterState2;
+        }
+        
+        case FilterType::BandPass:
+        {
+            // Band pass
+            filterState1 += f * (input - filterState1 + fb * (filterState1 - filterState2));
+            filterState2 += f * (filterState1 - filterState2);
+            return filterState1 - filterState2;
+        }
+        
+        case FilterType::Notch:
+        {
+            // Notch (band reject)
+            filterState1 += f * (input - filterState1 + fb * (filterState1 - filterState2));
+            filterState2 += f * (filterState1 - filterState2);
+            return input - (filterState1 - filterState2);
+        }
+        
+        case FilterType::Comb:
+        {
+            // Comb filter with feedback
+            float delaySamples = juce::jlimit(1.0f, 44100.0f, static_cast<float>(currentSampleRate) / cutoff);
+            int delayInt = static_cast<int>(delaySamples);
+            int readIndex = combIndex - delayInt;
+            if (readIndex < 0) readIndex += 44100;
+            
+            float delayed = readIndex < 44100 ? combDelay[readIndex] : 0.0f;
+            float output = input + delayed * resonance;
+            if (combIndex < 44100) combDelay[combIndex] = output;
+            combIndex = (combIndex + 1) % 44100;
+            return output;
+        }
+        
+        case FilterType::FormantA:
+        {
+            // Formant filter for 'A' vowel (700Hz, 1220Hz, 2600Hz)
+            float f1 = 700.0f / static_cast<float>(currentSampleRate) * 2.0f;
+            float f2 = 1220.0f / static_cast<float>(currentSampleRate) * 2.0f;
+            filterState1 += f1 * (input - filterState1) * 3.0f;
+            filterState2 += f2 * (input - filterState2) * 2.0f;
+            return (filterState1 + filterState2) * 0.5f;
+        }
+        
+        case FilterType::FormantE:
+        {
+            // Formant filter for 'E' vowel (660Hz, 1720Hz)
+            float f1 = 660.0f / static_cast<float>(currentSampleRate) * 2.0f;
+            float f2 = 1720.0f / static_cast<float>(currentSampleRate) * 2.0f;
+            filterState1 += f1 * (input - filterState1) * 3.0f;
+            filterState2 += f2 * (input - filterState2) * 2.0f;
+            return (filterState1 + filterState2) * 0.5f;
+        }
+        
+        case FilterType::FormantI:
+        {
+            // Formant filter for 'I' vowel (270Hz, 2290Hz)
+            float f1 = 270.0f / static_cast<float>(currentSampleRate) * 2.0f;
+            float f2 = 2290.0f / static_cast<float>(currentSampleRate) * 2.0f;
+            filterState1 += f1 * (input - filterState1) * 3.0f;
+            filterState2 += f2 * (input - filterState2) * 2.0f;
+            return (filterState1 + filterState2) * 0.5f;
+        }
+        
+        case FilterType::FormantO:
+        {
+            // Formant filter for 'O' vowel (730Hz, 1090Hz)
+            float f1 = 730.0f / static_cast<float>(currentSampleRate) * 2.0f;
+            float f2 = 1090.0f / static_cast<float>(currentSampleRate) * 2.0f;
+            filterState1 += f1 * (input - filterState1) * 3.0f;
+            filterState2 += f2 * (input - filterState2) * 2.0f;
+            return (filterState1 + filterState2) * 0.5f;
+        }
+        
+        case FilterType::FormantU:
+        {
+            // Formant filter for 'U' vowel (300Hz, 870Hz)
+            float f1 = 300.0f / static_cast<float>(currentSampleRate) * 2.0f;
+            float f2 = 870.0f / static_cast<float>(currentSampleRate) * 2.0f;
+            filterState1 += f1 * (input - filterState1) * 3.0f;
+            filterState2 += f2 * (input - filterState2) * 2.0f;
+            return (filterState1 + filterState2) * 0.5f;
+        }
+        
+        case FilterType::Phaser:
+        {
+            // 4-stage phaser
+            phaserPhase += 0.5f / static_cast<float>(currentSampleRate);
+            if (phaserPhase > 1.0f) phaserPhase -= 1.0f;
+            
+            float lfo = std::sin(phaserPhase * 2.0f * juce::MathConstants<float>::pi);
+            float sweepFreq = cutoff * (1.0f + lfo * 0.5f);
+            float allpassFreq = sweepFreq / static_cast<float>(currentSampleRate);
+            
+            float signal = input;
+            for (int i = 0; i < 4; ++i)
+            {
+                float temp = signal;
+                signal = phaserStages[i] + signal * allpassFreq;
+                phaserStages[i] = temp - signal * allpassFreq;
+            }
+            
+            return input + signal * resonance;
+        }
+        
+        case FilterType::RingModFilter:
+        {
+            // Ring modulation with filtered carrier
+            float carrier = std::sin(2.0f * juce::MathConstants<float>::pi * filterState3);
+            filterState3 += cutoff / static_cast<float>(currentSampleRate);
+            if (filterState3 > 1.0f) filterState3 -= 1.0f;
+            
+            float ringMod = input * carrier;
+            filterState1 += f * (ringMod - filterState1);
+            return filterState1;
+        }
+        
+        default:
+            return input;
+    }
 }
 
 void FidgetAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
@@ -283,10 +535,29 @@ void FidgetAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             // Reset oscillator states for consistent sound
             phase = 0.0f;
             phase2 = 0.0f;
+            subPhase = 0.0f;
+            fmPhase = 0.0f;
             wobblePhase = 0.0f;
             grainPhase = 0.0f;
             glitchCounter = 0;
             filterState = 0.0f;
+            
+            // Reset supersaw phases with slight detuning
+            for (int i = 0; i < 7; ++i)
+            {
+                sawPhases[i] = 0.0f;
+            }
+            
+            // Reset filter states
+            filterState1 = 0.0f;
+            filterState2 = 0.0f;
+            filterState3 = 0.0f;
+            filterState4 = 0.0f;
+            phaserPhase = 0.0f;
+            for (int i = 0; i < 4; ++i)
+            {
+                phaserStages[i] = 0.0f;
+            }
         }
         else if (message.isNoteOff())
         {
@@ -297,8 +568,20 @@ void FidgetAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         }
     }
     
-    // Get current weirdness value
-    float weirdness = *weirdnessParam;
+    // Get current weirdness value and convert to knob position (0-127)
+    float weirdnessValue = *weirdnessParam;
+    int knobPosition = static_cast<int>(weirdnessValue * 127.0f);
+    
+    // Get the random amount for this knob position
+    float randomWeirdnessAmount = 0.0f;
+    float randomCutoff = 1000.0f;
+    float randomResonance = 0.0f;
+    if (currentNote >= 0 && currentNote < 128)
+    {
+        randomWeirdnessAmount = noteWeirdness[currentNote].randomAmounts[knobPosition];
+        randomCutoff = noteWeirdness[currentNote].randomCutoffs[knobPosition];
+        randomResonance = noteWeirdness[currentNote].randomResonances[knobPosition];
+    }
     
     // Calculate envelope
     float envelopeIncrement = 0.0f;
@@ -313,6 +596,12 @@ void FidgetAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     
     // Generate audio
     const float phaseIncrement = frequency / currentSampleRate;
+    const float subPhaseIncrement = (frequency * 0.5f) / currentSampleRate; // Sub osc at half frequency
+    const float fmPhaseIncrement = (frequency * 2.0f) / currentSampleRate; // FM at double frequency
+    
+    // Get wave type and filter type for current note
+    WaveType waveType = currentNote >= 0 ? noteWeirdness[currentNote].waveType : WaveType::Sine;
+    FilterType filterType = currentNote >= 0 ? noteWeirdness[currentNote].filterType : FilterType::LowPass;
     
     for (int channel = 0; channel < totalNumOutputChannels; ++channel)
     {
@@ -323,18 +612,35 @@ void FidgetAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             // Update envelope
             envelope = juce::jlimit(0.0f, 1.0f, envelope + envelopeIncrement);
             
-            // Generate base sine wave
-            float sineWave = std::sin(2.0f * juce::MathConstants<float>::pi * phase);
+            // Generate oscillator based on wave type
+            float waveform = generateOscillator(waveType, phase, frequency);
             
-            // Apply weird processing
-            float weirdWave = processWeirdOscillator(sineWave, currentNote, weirdness);
+            // Apply weird processing with random amount
+            float weirdWave = processWeirdOscillator(waveform, currentNote, randomWeirdnessAmount);
+            
+            // Apply chaos filter
+            float filtered = processChaosFilter(weirdWave, filterType, randomCutoff, randomResonance);
             
             // Output with envelope and velocity
-            channelData[sample] = amplitude * envelope * velocity * weirdWave;
+            channelData[sample] = amplitude * envelope * velocity * filtered;
             
+            // Update phases
             phase += phaseIncrement;
-            if (phase > 1.0f)
-                phase -= 1.0f;
+            if (phase > 1.0f) phase -= 1.0f;
+            
+            subPhase += subPhaseIncrement;
+            if (subPhase > 1.0f) subPhase -= 1.0f;
+            
+            fmPhase += fmPhaseIncrement;
+            if (fmPhase > 1.0f) fmPhase -= 1.0f;
+            
+            // Update supersaw phases
+            for (int i = 0; i < 7; ++i)
+            {
+                float detune = 1.0f + (i - 3) * 0.01f;
+                sawPhases[i] += (phaseIncrement * detune);
+                if (sawPhases[i] > 1.0f) sawPhases[i] -= 1.0f;
+            }
         }
     }
 }

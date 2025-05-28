@@ -71,6 +71,86 @@ public:
     }
     
     WeirdType getCurrentWeirdType() const;
+    
+    // Wave types (one per note in octave)
+    enum class WaveType
+    {
+        Sine,           // C
+        Square,         // C#
+        Sawtooth,       // D
+        Triangle,       // D#
+        Pulse25,        // E
+        WhiteNoise,     // F
+        PinkNoise,      // F#
+        Supersaw,       // G
+        FM,             // G#
+        SquareSub,      // A
+        Pulse75,        // A#
+        CrackleNoise,   // B
+        NUM_WAVE_TYPES
+    };
+    
+    const char* getWaveTypeName(WaveType type) const
+    {
+        switch(type)
+        {
+            case WaveType::Sine: return "Sine";
+            case WaveType::Square: return "Square";
+            case WaveType::Sawtooth: return "Sawtooth";
+            case WaveType::Triangle: return "Triangle";
+            case WaveType::Pulse25: return "Pulse 25%";
+            case WaveType::WhiteNoise: return "White Noise";
+            case WaveType::PinkNoise: return "Pink Noise";
+            case WaveType::Supersaw: return "Supersaw";
+            case WaveType::FM: return "FM";
+            case WaveType::SquareSub: return "Square+Sub";
+            case WaveType::Pulse75: return "Pulse 75%";
+            case WaveType::CrackleNoise: return "Crackle";
+            default: return "Unknown";
+        }
+    }
+    
+    WaveType getCurrentWaveType() const;
+    
+    // Filter types (one per note in octave)
+    enum class FilterType
+    {
+        LowPass,        // C
+        HighPass,       // C#
+        BandPass,       // D
+        Notch,          // D#
+        Comb,           // E
+        FormantA,       // F
+        FormantE,       // F#
+        FormantI,       // G
+        FormantO,       // G#
+        FormantU,       // A
+        Phaser,         // A#
+        RingModFilter,  // B
+        NUM_FILTER_TYPES
+    };
+    
+    const char* getFilterTypeName(FilterType type) const
+    {
+        switch(type)
+        {
+            case FilterType::LowPass: return "Low Pass";
+            case FilterType::HighPass: return "High Pass";
+            case FilterType::BandPass: return "Band Pass";
+            case FilterType::Notch: return "Notch";
+            case FilterType::Comb: return "Comb";
+            case FilterType::FormantA: return "Formant A";
+            case FilterType::FormantE: return "Formant E";
+            case FilterType::FormantI: return "Formant I";
+            case FilterType::FormantO: return "Formant O";
+            case FilterType::FormantU: return "Formant U";
+            case FilterType::Phaser: return "Phaser";
+            case FilterType::RingModFilter: return "Ring Mod Filter";
+            default: return "Unknown";
+        }
+    }
+    
+    FilterType getCurrentFilterType() const;
 
 private:
     // Parameters
@@ -100,6 +180,26 @@ private:
     float wobblePhase = 0.0f; // For wobbler LFO
     float grainPhase = 0.0f;  // For granular
     
+    // Additional oscillator state
+    float subPhase = 0.0f;    // For sub oscillator
+    float fmPhase = 0.0f;     // For FM carrier
+    float noiseState = 0.0f;  // For pink noise
+    float crackleTimer = 0.0f; // For crackle noise
+    std::array<float, 7> sawPhases = {0}; // For supersaw
+    
+    // Random number generator for consistent randomness
+    juce::Random random;
+    
+    // Filter state variables
+    float filterState1 = 0.0f;
+    float filterState2 = 0.0f;
+    float filterState3 = 0.0f;
+    float filterState4 = 0.0f;
+    float combDelay[44100] = {0}; // 1 second of delay for comb filter
+    int combIndex = 0;
+    float phaserPhase = 0.0f;
+    std::array<float, 4> phaserStages = {0};
+    
     // Per-note deterministic weirdness
     struct NoteWeirdness
     {
@@ -111,6 +211,14 @@ private:
         float bitDepth = 0.0f;
         float grainSize = 0.0f;
         WeirdType type = WeirdType::Wobbler;
+        WaveType waveType = WaveType::Sine;
+        FilterType filterType = FilterType::LowPass;
+        
+        // Random effect amounts for each knob position (0-127)
+        std::array<float, 128> randomAmounts = {0};
+        // Random filter parameters for each knob position
+        std::array<float, 128> randomCutoffs = {0};
+        std::array<float, 128> randomResonances = {0};
     };
     
     std::array<NoteWeirdness, 128> noteWeirdness;
@@ -121,8 +229,22 @@ private:
         return 440.0f * std::pow(2.0f, (midiNote - 69) / 12.0f);
     }
     
+    WaveType getWaveTypeForNote(int midiNote) const
+    {
+        int noteInOctave = midiNote % 12;
+        return static_cast<WaveType>(noteInOctave);
+    }
+    
+    FilterType getFilterTypeForNote(int midiNote) const
+    {
+        int noteInOctave = midiNote % 12;
+        return static_cast<FilterType>(noteInOctave);
+    }
+    
     void initializeNoteWeirdness();
+    float generateOscillator(WaveType type, float phase, float frequency);
     float processWeirdOscillator(float baseValue, int noteNumber, float weirdnessAmount);
+    float processChaosFilter(float input, FilterType type, float cutoff, float resonance);
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FidgetAudioProcessor)
 };

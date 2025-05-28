@@ -33,16 +33,26 @@ void FidgetAudioProcessorEditor::paint (juce::Graphics& g)
     g.setFont (28.0f);
     g.drawFittedText ("FIDGET", getLocalBounds().removeFromTop(50), juce::Justification::centred, 1);
     
-    // Weird type indicator
-    g.setFont (20.0f);
-    
     int currentNote = audioProcessor.getCurrentNote();
     if (currentNote >= 0)
     {
-        auto weirdType = audioProcessor.getCurrentWeirdType();
-        const char* typeName = audioProcessor.getWeirdTypeName(weirdType);
+        // Get wave type
+        auto waveType = audioProcessor.getCurrentWaveType();
+        const char* waveTypeName = audioProcessor.getWaveTypeName(waveType);
         
-        // Color code by type
+        // Draw wave type
+        g.setFont (18.0f);
+        g.setColour(juce::Colours::lightblue);
+        g.drawFittedText(waveTypeName, getLocalBounds().removeFromTop(80).withTrimmedTop(50), 
+                         juce::Justification::centred, 1);
+        
+        // Draw weird type
+        auto weirdType = audioProcessor.getCurrentWeirdType();
+        const char* weirdTypeName = audioProcessor.getWeirdTypeName(weirdType);
+        
+        g.setFont (16.0f);
+        
+        // Color code by weird type
         switch(weirdType)
         {
             case FidgetAudioProcessor::WeirdType::Wobbler:
@@ -65,12 +75,21 @@ void FidgetAudioProcessorEditor::paint (juce::Graphics& g)
                 g.setColour(juce::Colours::grey); break;
         }
         
-        g.drawFittedText(typeName, getLocalBounds().removeFromTop(100).withTrimmedTop(50), 
+        g.drawFittedText("+ " + juce::String(weirdTypeName), getLocalBounds().removeFromTop(110).withTrimmedTop(80), 
+                         juce::Justification::centred, 1);
+        
+        // Draw filter type
+        auto filterType = audioProcessor.getCurrentFilterType();
+        const char* filterTypeName = audioProcessor.getFilterTypeName(filterType);
+        
+        g.setFont (14.0f);
+        g.setColour(juce::Colours::lightgreen);
+        g.drawFittedText("Filter: " + juce::String(filterTypeName), getLocalBounds().removeFromTop(135).withTrimmedTop(110), 
                          juce::Justification::centred, 1);
         
         // Note info
         g.setColour(juce::Colours::white);
-        g.setFont(16.0f);
+        g.setFont(14.0f);
         
         const char* noteNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
         int noteName = currentNote % 12;
@@ -79,7 +98,7 @@ void FidgetAudioProcessorEditor::paint (juce::Graphics& g)
         juce::String noteText = juce::String(noteNames[noteName]) + juce::String(octave) + 
                                " (MIDI " + juce::String(currentNote) + ")";
         
-        g.drawFittedText(noteText, getLocalBounds().removeFromTop(130).withTrimmedTop(100), 
+        g.drawFittedText(noteText, getLocalBounds().removeFromTop(160).withTrimmedTop(135), 
                          juce::Justification::centred, 1);
     }
     else
@@ -93,7 +112,7 @@ void FidgetAudioProcessorEditor::paint (juce::Graphics& g)
     // Instructions
     g.setFont(12.0f);
     g.setColour(juce::Colours::grey);
-    g.drawFittedText("Each note has its own weird behavior!\nTurn the knob to morph the weirdness.", 
+    g.drawFittedText("Each note = unique wave + weird effect\nEach knob position = random amount", 
                      getLocalBounds().removeFromBottom(50), 
                      juce::Justification::centred, 2);
 }
