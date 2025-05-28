@@ -1,0 +1,42 @@
+# Build directories
+build/
+cmake-build-*/
+.build/
+
+# JUCE build artifacts
+*_artefacts/
+JuceLibraryCode/Builds/
+JuceLibraryCode/BinaryData*
+
+# IDE specific files
+.idea/
+.vscode/
+*.xcodeproj/
+*.xcworkspace/
+.DS_Store
+
+# Compiled binaries
+*.vst
+*.vst3
+*.component
+*.aaxplugin
+*.app
+*.exe
+*.dll
+*.dylib
+
+# Temporary files
+*.swp
+*.swo
+*~
+.#*
+\#*#
+
+# Debug files
+*.dSYM/
+*.pdb
+
+# JUCE specific (we'll keep the JUCE submodule)
+# But ignore user-specific JUCE settings
+JUCE/extras/Projucer/Builds/
+JUCE/.git
